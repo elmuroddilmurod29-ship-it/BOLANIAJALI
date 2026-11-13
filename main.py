@@ -1,12 +1,27 @@
 import asyncio
 import logging
+import os
 import sys
+import types
+from pathlib import Path
 
-# Windows konsolida emojilar (UTF-8) xatosiz chiqishi uchun
+# Windows va Linux konsollarida xatoliklarni oldini olish
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 if hasattr(sys.stderr, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8")
+
+# Render / Linux muhitida 'bot' modulini avtomatik topish
+CURRENT_DIR = Path(__file__).resolve().parent
+for p in [CURRENT_DIR, CURRENT_DIR / "bot", CURRENT_DIR.parent]:
+    if p.exists() and str(p) not in sys.path:
+        sys.path.insert(0, str(p))
+
+# Agar GitHub-ga fayllar 'bot' papkasisiz to'g'ridan-to'g'ri tashlangan bo'lsa
+if not (CURRENT_DIR / "bot").exists() and (CURRENT_DIR / "config.py").exists():
+    bot_pkg = types.ModuleType("bot")
+    bot_pkg.__path__ = [str(CURRENT_DIR)]
+    sys.modules["bot"] = bot_pkg
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
