@@ -1,0 +1,25 @@
+# Muhit sozlamalari (API kalitlarni aslo ochiqqa chiqarmang!)
+.env
+.env.local
+
+# Ma'lumotlar bazasi
+*.sqlite3
+*.db
+
+# Python kesh fayllari
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual muhitlar
+venv/
+env/
+ENV/
+.venv/
+
+# IDE va muhit fayllari
+.vscode/
+.idea/
+*.swp
+*.log
