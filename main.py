@@ -36,15 +36,27 @@ if not (CURRENT_DIR / "bot").is_dir():
         sys.modules[f"bot.{sub}"] = sub_mod
         setattr(bot_pkg, sub, sub_mod)
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from bot.config import BOT_TOKEN, PRIMARY_ADMIN_ID
 from bot.database.db import db
-from bot.handlers import main_router
 from bot.middlewares.subscription import SubscriptionMiddleware
+
+# Handlerlarni xavfsiz va to'g'ridan-to'g'ri ulash
+try:
+    from bot.handlers import main_router
+except Exception:
+    from bot.handlers.admin import router as admin_router
+    from bot.handlers.payment import router as payment_router
+    from bot.handlers.user import router as user_router
+
+    main_router = Router()
+    main_router.include_router(admin_router)
+    main_router.include_router(payment_router)
+    main_router.include_router(user_router)
 
 # Loglarni sozlash
 logging.basicConfig(
@@ -122,4 +134,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot qo'lda to'xtatildi.")    
+        logger.info("Bot qo'lda to'xtatildi.")   
