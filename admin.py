@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 from aiogram import Router, F, types
 from aiogram.filters import Command
@@ -214,14 +215,14 @@ async def handle_admin_prompts_menu(callback: types.CallbackQuery, state: FSMCon
     count = len(extra_prompts)
 
     text = (
-        "📝 **AI PROMPT BOSHQARUV TIZIMI:**\n\n"
-        "⚙️ **Arxitektura qoidasi:**\n"
-        "• `Base_Prompt` (Qiz va O'g'il bola personajlarining asosiy xarakteri) bazada doim alohida turadi.\n"
-        "• Siz kiritgan har bir yangi prompt `Extra_Prompt` sifatida saqlanib, **eski promptlarni O'CHIRMAYDI**.\n"
-        "• Har safar AI ga murojaat qilinganda: `Base Prompt` + `Barcha Extra Promptlar` birgalikda yuboriladi!\n\n"
-        f"📌 Hozirda faol qo'shimcha promptlar soni: **{count} ta**"
+        "📝 <b>AI PROMPT BOSHQARUV TIZIMI:</b>\n\n"
+        "⚙️ <b>Arxitektura qoidasi:</b>\n"
+        "• <code>Base_Prompt</code> (Qiz va O'g'il bola personajlarining asosiy xarakteri) bazada doim alohida turadi.\n"
+        "• Siz kiritgan har bir yangi prompt <code>Extra_Prompt</code> sifatida saqlanib, <b>eski promptlarni O'CHIRMAYDI</b>.\n"
+        "• Har safar AI ga murojaat qilinganda siz qo'shgan yangi promptlar <b>ENG YUQORI USTUVORLIK</b> bilan yuboriladi!\n\n"
+        f"📌 Hozirda faol qo'shimcha promptlar soni: <b>{count} ta</b>"
     )
-    await callback.message.edit_text(text, reply_markup=admin_prompts_keyboard(), parse_mode="Markdown")
+    await callback.message.edit_text(text, reply_markup=admin_prompts_keyboard(), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "admin_prompt_add")
@@ -233,17 +234,18 @@ async def handle_admin_prompt_add_start(callback: types.CallbackQuery, state: FS
     await state.set_state(AdminStates.waiting_extra_prompt)
 
     text = (
-        "➕ **YANGI PROMPT / XISLAT QO'SHISH:**\n\n"
+        "➕ <b>YANGI PROMPT / QAT'IY QOIDA QO'SHISH:</b>\n\n"
         "AI ga qo'shmoqchi bo'lgan yangi qoida, xislat yoki ko'rsatmani yozib yuboring.\n"
-        "*(Bu yangi xislat avvalgi promptlar ustiga qo'shiladi va eskilari saqlanib qoladi)*\n\n"
-        "Masalan: _'Foydalanuvchilarga doimo xushmuomala bo'l va javobing oxirida pozitiv ibora qo'sh'_"
+        "<i>(Bu yangi ko'rsatma eng yuqori ustuvorlik bilan AI ga ulanadi va eski xarakter saqlanib qoladi)</i>\n\n"
+        "Masalan:\n"
+        "<code>FAQAT KICHIK HARFLAR: barcha gaplaring kichik harfda boshlansin. Nuqta va so'roq umuman ishlatilmasin.</code>"
     )
     keyboard = types.InlineKeyboardMarkup(
         inline_keyboard=[
             [types.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="admin_prompts")]
         ]
     )
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
 @router.message(AdminStates.waiting_extra_prompt, F.text)
@@ -256,51 +258,72 @@ async def handle_admin_prompt_add_save(message: types.Message, state: FSMContext
     prompt_id = await db.add_extra_prompt(new_prompt)
     await state.clear()
 
+    escaped_prompt = html.escape(new_prompt)
     await message.answer(
-        f"✅ **Yangi prompt muvaffaqiyatli qo'shildi!** (ID: #{prompt_id})\n\n"
-        f"📌 Qo'shilgan ko'rsatma:\n_{new_prompt}_\n\n"
-        f"Eski xarakter va oldingi promptlar to'liq saqlanib qoldi. "
-        f"Endi AI har ikkalasini inobatga olgan holda javob beradi.",
+        f"✅ <b>Yangi prompt muvaffaqiyatli qo'shildi!</b> (ID: #{prompt_id})\n\n"
+        f"📌 Qo'shilgan ko'rsatma:\n<code>{escaped_prompt}</code>\n\n"
+        f"Ushbu qoida sun'iy intellektga eng yuqori ustuvorlik (override) bilan ulandi!",
         reply_markup=admin_main_keyboard(),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 @router.callback_query(F.data == "admin_prompt_view")
 async def handle_admin_prompt_view(callback: types.CallbackQuery):
-    """Mavjud barcha promptlarni to'liq ko'rish"""
+    """Mavjud qo'shimcha promptlarni ko'rish va boshqarish"""
     if not is_admin(callback.from_user.id):
         return
 
-    female_base = await db.get_base_prompt("female")
-    male_base = await db.get_base_prompt("male")
     extra_prompts = await db.get_extra_prompts()
+    keyboard_buttons = []
 
-    extras_text = ""
     if extra_prompts:
-        extras_text = "\n".join(
-            f"**#{idx+1} (ID: {p['id']}):** {p['prompt_text']}"
-            for idx, p in enumerate(extra_prompts)
-        )
+        lines = ["📋 <b>ADMINNING QO'SHIMCHA PROMPTLARI RO'YXATI:</b>\n"]
+        for idx, p in enumerate(extra_prompts):
+            p_text = html.escape(p['prompt_text'])
+            # Matn juda uzun bo'lsa qisqartirish
+            display_text = p_text if len(p_text) <= 300 else p_text[:300] + "..."
+            lines.append(f"<b>#{idx+1} (ID: {p['id']}):</b>\n<code>{display_text}</code>\n")
+            keyboard_buttons.append([
+                types.InlineKeyboardButton(
+                    text=f"🗑 #{idx+1} (ID: {p['id']}) ni o'chirish",
+                    callback_data=f"admin_pdel_{p['id']}"
+                )
+            ])
+        text = "\n".join(lines)
     else:
-        extras_text = "*(Hozircha qo'shimcha promptlar yo'q)*"
+        text = (
+            "📋 <b>QO'SHIMCHA PROMPTLAR:</b>\n\n"
+            "<i>Hozircha admin tomonidan kiritilgan qo'shimcha promptlar yo'q. "
+            "Asosiy 'Amina' va 'Shohrux' bazaviy personajlari to'liq faol!</i>\n\n"
+            "Yangi xislat yoki qat'iy qoida qo'shish uchun quyidagi tugmani bosing:"
+        )
 
-    text = (
-        "📋 **BAZADAGI BARCHA AI PROMPTLARI:**\n\n"
-        f"👩 **Qiz bola AI Base Prompt:**\n_{female_base}_\n\n"
-        f"👨 **O'g'il bola AI Base Prompt:**\n_{male_base}_\n\n"
-        f"➕ **Faol Extra Promptlar ({len(extra_prompts)} ta):**\n"
-        f"{extras_text}\n\n"
-        "💡 Har bir suhbatda ushbu barcha ma'lumotlar AI ga tizim yo'riqnomasi sifatida birgalikda uzatiladi."
-    )
+    keyboard_buttons.append([
+        types.InlineKeyboardButton(text="➕ Yangi Prompt qo'shish", callback_data="admin_prompt_add")
+    ])
+    keyboard_buttons.append([
+        types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="admin_prompts")
+    ])
 
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="admin_prompts")]
-        ]
-    )
-
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
+
+@router.callback_query(F.data.startswith("admin_pdel_"))
+async def handle_admin_prompt_delete_single(callback: types.CallbackQuery):
+    """Aynan bitta qo'shimcha promptni o'chirish"""
+    if not is_admin(callback.from_user.id):
+        return
+
+    try:
+        prompt_id = int(callback.data.split("_")[-1])
+        await db.delete_extra_prompt(prompt_id)
+        await callback.answer(f"#{prompt_id} raqamli prompt o'chirildi!", show_alert=True)
+    except Exception as e:
+        logger.error(f"Promptni o'chirishda xatolik: {e}")
+        await callback.answer("O'chirishda xatolik!", show_alert=True)
+
+    await handle_admin_prompt_view(callback)
 
 @router.callback_query(F.data == "admin_prompt_clear_confirm")
 async def handle_admin_prompt_clear_confirm(callback: types.CallbackQuery):
@@ -309,11 +332,11 @@ async def handle_admin_prompt_clear_confirm(callback: types.CallbackQuery):
         return
 
     text = (
-        "⚠️ **DIQQAT!**\n\n"
+        "⚠️ <b>DIQQAT!</b>\n\n"
         "Siz haqiqatan ham admin tomonidan kiritilgan barcha qo'shimcha (extra) promptlarni tozalab tashlamoqchimisiz?\n"
-        "*(Asosiy Base Promptlarga tegilmaydi)*"
+        "<i>(Asosiy Base Promptlarga tegilmaydi)</i>"
     )
-    await callback.message.edit_text(text, reply_markup=confirm_clear_prompts_keyboard(), parse_mode="Markdown")
+    await callback.message.edit_text(text, reply_markup=confirm_clear_prompts_keyboard(), parse_mode="HTML")
     await callback.answer()
 
 @router.callback_query(F.data == "admin_prompt_clear_yes")
@@ -325,10 +348,10 @@ async def handle_admin_prompt_clear_yes(callback: types.CallbackQuery):
     await db.clear_all_extra_prompts()
     await callback.answer("Barcha qo'shimcha promptlar tozalandi!", show_alert=True)
     await callback.message.edit_text(
-        "✅ **Barcha qo'shimcha (extra) promptlar tozalandi!**\n\n"
+        "✅ <b>Barcha qo'shimcha (extra) promptlar tozalandi!</b>\n\n"
         "Endi AI faqat asosiy Base Promptlar asosida ishlaydi.",
         reply_markup=admin_prompts_keyboard(),
-        parse_mode="Markdown"
+        parse_mode="HTML"
     )
 
 # ==================== 5. MAJBURIY OBUNA KANALI ====================

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 from typing import Optional
 from google import genai
 from google.genai import types
@@ -8,12 +9,58 @@ from bot.database.db import db
 
 logger = logging.getLogger(__name__)
 
+EMOJI_PATTERN = re.compile(r'[\U00010000-\U0010ffff]', flags=re.UNICODE)
+
+def post_process_ai_response(text: str) -> str:
+    """
+    Qat'iy yozish formatini majburiy qo'llash:
+    1. FAQAT KICHIK HARFLAR: Barcha harflar kichik bo'ladi.
+    2. TINISH BELGILARI YO'Q: Gap oxiridagi nuqta (.), so'roq (?), undov (!) olib tashlanadi.
+    3. TAQIQLANGAN SO'ZLAR: Gap oxiridagi 'o'zi', 'shekilli' so'zlari olib tashlanadi.
+    4. SMEYLIKLAR ME'YORI: Ketma-ket yoki ko'p smayliklar tozalanadi (ko'pi bilan 1 ta).
+    """
+    if not text:
+        return text
+
+    # 1. Hammasini kichik harfga o'tkazish
+    cleaned = text.lower().strip()
+
+    # 2. Gap oxiridagi nuqta, so'roq, undov, ko'pnuqtalarni olib tashlash
+    cleaned = re.sub(r'[\.\?\!…]+(\s*)$', '', cleaned).strip()
+
+    # 3. Ichki jumlalar oxiridagi ortiqcha nuqta va undovlarni tozalash (bo'sh joy qoldirish)
+    cleaned = re.sub(r'[\.\?\!…]+\s+', ' ', cleaned).strip()
+
+    # 4. Gap oxiridagi (yoki oxirgi smaylikdan oldingi) 'o'zi' yoki 'shekilli' so'zlarini tozalash
+    cleaned = re.sub(r'\s+(o[\'ʼ`]?zi|shekilli)(\s*[\U00010000-\U0010ffff\s]*)$', r'\2', cleaned).strip()
+
+    # 5. Smayliklar me'yori: agar xabarda 2 yoki undan ko'p smaylik bo'lsa, faqat 1 tasini qoldirish
+    matches = list(EMOJI_PATTERN.finditer(cleaned))
+    if len(matches) > 1:
+        res = []
+        last_idx = 0
+        kept = 0
+        for m in matches:
+            res.append(cleaned[last_idx:m.start()])
+            if kept < 1:
+                res.append(m.group(0))
+                kept += 1
+            last_idx = m.end()
+        res.append(cleaned[last_idx:])
+        cleaned = re.sub(r'\s+', ' ', ''.join(res)).strip()
+
+    # 6. Yana bir bor oxiridagi nuqta/so'roq/undov va taqiqlangan so'zlarni tekshirish
+    cleaned = re.sub(r'\s+(o[\'ʼ`]?zi|shekilli)(\s*[\U00010000-\U0010ffff\s]*)$', r'\2', cleaned).strip()
+    cleaned = re.sub(r'[\.\?\!…]+$', '', cleaned).strip()
+
+    return cleaned
+
 class AIService:
     def __init__(self, api_key: str = AI_API_KEY, default_model: str = AI_MODEL):
         self.api_key = api_key
         self.default_model = default_model
-        # Fallback modellari (agar asosiy modelda vaqtinchalik 503 xatosi bo'lsa)
-        self.fallback_models = [default_model, "gemini-3.1-flash-lite", "gemini-2.5-pro"]
+        # Fallback modellari (100% tekshirilgan va ishlaydigan modellar)
+        self.fallback_models = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.8-flash"]
         self.client = genai.Client(api_key=self.api_key)
 
     async def generate_response(
@@ -94,6 +141,9 @@ class AIService:
                 "Kechirasiz, sun'iy intellekt xizmatida vaqtinchalik texnik yuklama kuzatilmoqda. "
                 "Iltimos, bir necha daqiqadan so'ng qayta urinib ko'ring."
             )
+
+        # Qat'iy yozish formati va filtrlarni qo'llash
+        response_text = post_process_ai_response(response_text)
 
         # 5. Xotirani bazaga yozish (Faqat muvaffaqiyatli javob bo'lganda)
         try:

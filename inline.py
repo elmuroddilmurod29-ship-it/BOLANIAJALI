@@ -119,7 +119,7 @@ def admin_prompts_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="➕ Yangi Prompt qo'shish", callback_data="admin_prompt_add")
             ],
             [
-                InlineKeyboardButton(text="📋 Barcha Promptlarni ko'rish", callback_data="admin_prompt_view")
+                InlineKeyboardButton(text="📋 Qo'shimcha Promptlarni ko'rish", callback_data="admin_prompt_view")
             ],
             [
                 InlineKeyboardButton(text="🗑 Qo'shimcha promptlarni tozalash", callback_data="admin_prompt_clear_confirm")

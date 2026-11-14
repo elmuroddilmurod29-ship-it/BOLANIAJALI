@@ -118,7 +118,14 @@ class Database:
                 "## 3. QAVSLAR VA YULDUZCHALAR QAT'IYAN TAQIQLANADI!\n"
                 "- HECH QACHON harakatlarni qavs va yulduzcha ichida yozma! (Masalan, *(kulib)*, *(qosh chimirib)*, *(xo'rsinib)* QAT'IYAN MUMKIN EMAS).\n"
                 "- Qavslar o'rniga FAQAT tabiiy emojilardan foydalan: 🙄, 😒, 😊, 😔, 😂, ❤️, 👀, 🤦‍♀️.\n\n"
-                "## 4. TO'G'RI VA TABIIY SO'ZLAR (SUN'IY XATOLAR TAQIQLANADI)\n"
+                "## 4. QAT'IY YOZISH FORMATI (BUZISH TAQIQLANADI)\n"
+                "Sen shu qoidalarni buzsang xotirang o'chiriladi. Qat'iy amal qil:\n"
+                "1. FAQAT KICHIK HARFLAR: Barcha gaplaring faqat kichkina harfda boshlanishi shart! (masalan: 'salom', 'qalesiz'). Bosh harflardan umuman foydalanma.\n"
+                "2. TINISH BELGILARI YO'Q: Gap oxirida nuqta (.), so'roq (?), undov (!) umuman ishlatilmasin.\n"
+                "3. TAQIQLANGAN SO'ZLAR: Gap oxirida 'o'zi', 'shekilli' degan so'zlarni UMUMAN ISHLATMA. (Masalan, 'jinni bo'ldingizmi o'zi' emas, faqat 'jinni bo'ldingizmi' deb yoz).\n"
+                "4. SMEYLIKLAR ME'YORI: Har gapda smaylik (emoji) yuborish QAT'IYAN TAQIQLANADI! Doimiy ravishda har bir xabarga smaylik tiqishtirma. Faqat vaqti-vaqti bilan (har 3-5 ta xabarda bir martagina) bittagina oddiy smaylik ishlatib tur, qolgan paytda smayliksiz oddiy matn yoz.\n"
+                "5. QISQALIK: Matnlaring 1 ta yoki maksimal 2 ta qisqa gapdan iborat bo'lsin.\n\n"
+                "## 5. TO'G'RI VA TABIIY SO'ZLAR (SUN'IY XATOLAR TAQIQLANADI)\n"
                 "- 'Mamaslaj', 'ksalmang' kabi sun'iy va ma'nosiz so'zlarni umuman o'ylab topma!\n"
                 "- Haqiqiy odamlar Telegramda qanday yozsa, aynan shunday tabiiy yoz (masalan: 'z qildiz', 'surang', 'bopti', 'xmm', 'xa', 'yo').\n\n"
                 "## 5. HIS-TUYG'U, UZUNLIK VA SEVGI DINAMIKASI\n"
@@ -205,10 +212,16 @@ class Database:
             }
 
             for key, val in default_settings.items():
-                await db.execute(
-                    "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
-                    (key, val)
-                )
+                if key in ("female_base_prompt", "male_base_prompt"):
+                    await db.execute(
+                        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                        (key, val)
+                    )
+                else:
+                    await db.execute(
+                        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                        (key, val)
+                    )
 
             await db.commit()
             logger.info("Database initialized successfully.")
@@ -549,33 +562,43 @@ class Database:
     async def build_full_system_prompt(self, character: str = "female") -> str:
         """
         Har safar AI ga so'rov yuborilganda:
-        [Tanlangan Personaj Base Prompti] + [Admindan qo'shilgan Extra Promptlar]
-        IKKALASI BIRLASHTIRILIB yuboriladi. Shunda AI eski va yangi xislatlarning barchasini biladi.
+        [Admin Extra Promptlari (TOP PRIORITY)] + [Tanlangan Personaj Base Prompti] + [Eslatma]
+        IKKALASI BIRLASHTIRILIB yuboriladi. Shunda AI admin qo'shgan yangi qoidalarga 100% bo'ysunadi!
         """
         base_prompt = await self.get_base_prompt(character)
         extra_prompts = await self.get_extra_prompts()
 
-        full_prompt_parts = [
-            f"=== ASOSIY XARAKTER VA PERSONAJ YO'RIQ NOMASI ===\n{base_prompt}"
-        ]
+        parts = []
 
         if extra_prompts:
             extras_text = "\n".join(
-                f"- [Qoida/Xislat #{idx+1}]: {item['prompt_text']}"
+                f"⚡️ [MAXSUS BUYRUQ #{idx+1}]: {item['prompt_text']}"
                 for idx, item in enumerate(extra_prompts)
             )
-            full_prompt_parts.append(
-                f"\n=== ADMIN TOMONIDAN BELGILANGAN QO'SHIMCHA QOIDALAR VA TALABLAR ===\n{extras_text}"
+            parts.append(
+                f"🚨🚨🚨 QAT'IY VA ENG YUQORI USTUVORLIKDAGI ADMIN BUYRUQLARI (BU BUYRUQLAR BOSHQA BARCHA QOIDALARDAN USTUN TURADI):\n"
+                f"{extras_text}\n"
+                f"OGOHLANTIRISH: Ushbu maxsus buyruqlarni 100% aniqlik bilan bajarishing shart! Agar ular personajning boshqa qoidalariga zid kelsa ham, aynan mana shu buyruqlarga so'zsiz amal qilasan!\n"
             )
 
-        full_prompt_parts.append(
+        parts.append(f"=== ASOSIY XARAKTER VA PERSONAJ YO'RIQ NOMASI ===\n{base_prompt}")
+
+        if extra_prompts:
+            parts.append(
+                f"\n🚨 YANA BIR BOR ESLATMA (ADMINNING ENG SO'NGGI VA ENG YUQORI BUYRUQLARI):\n"
+                f"{extras_text}\n"
+                f"Ushbu buyruqlarga qat'iy amal qil! Hech qanday istisno yo'q!"
+            )
+
+        parts.append(
             "\n=== MUHIM MULOQOT QOIDASI ===\n"
             "Sen har doim yuqoridagi xarakter va qo'shimcha talablarga qat'iy rioya qilgan holda "
-            "samimiy, aniq va sifatli javob berishing shart. Foydalanuvchining ism-familiyasi yoki shaxsiy ma'lumotlarini "
-            "boshqalar bilan aralashtirma, o'zingni har doim belgilangan shaxs sifatida tut."
+            "samimiy, aniq va sifatli javob berishing shart. Har bir javobing faqat kichik harfda boshlansin, "
+            "gap oxirida nuqta, so'roq yoki undov qo'yma, gap oxirida 'o'zi' yoki 'shekilli' so'zlarini ishlatma, "
+            "va har gapda smaylik tiqishtirma!"
         )
 
-        return "\n".join(full_prompt_parts)
+        return "\n".join(parts)
 
     # ==================== ADMIN STATISTIKASI ====================
 
