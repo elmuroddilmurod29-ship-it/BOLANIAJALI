@@ -45,18 +45,26 @@ from bot.config import BOT_TOKEN, PRIMARY_ADMIN_ID
 from bot.database.db import db
 from bot.middlewares.subscription import SubscriptionMiddleware
 
-# Handlerlarni xavfsiz va to'g'ridan-to'g'ri ulash
+# Handlerlarni to'g'ridan-to'g'ri va xavfsiz ulash
 try:
     from bot.handlers import main_router
-except Exception:
-    from bot.handlers.admin import router as admin_router
-    from bot.handlers.payment import router as payment_router
-    from bot.handlers.user import router as user_router
+except (ImportError, ModuleNotFoundError, AttributeError):
+    try:
+        from handlers import main_router
+    except Exception:
+        try:
+            from bot.handlers.admin import router as admin_router
+            from bot.handlers.payment import router as payment_router
+            from bot.handlers.user import router as user_router
+        except (ImportError, ModuleNotFoundError):
+            from handlers.admin import router as admin_router
+            from handlers.payment import router as payment_router
+            from handlers.user import router as user_router
 
-    main_router = Router()
-    main_router.include_router(admin_router)
-    main_router.include_router(payment_router)
-    main_router.include_router(user_router)
+        main_router = Router()
+        for r in (admin_router, payment_router, user_router):
+            if not getattr(r, "parent_router", None):
+                main_router.include_router(r)
 
 # Loglarni sozlash
 logging.basicConfig(
@@ -134,4 +142,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot qo'lda to'xtatildi.")   
+        logger.info("Bot qo'lda to'xtatildi.")

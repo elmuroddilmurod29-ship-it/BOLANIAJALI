@@ -9,7 +9,7 @@ from bot.services.ai_service import ai_service
 from bot.states.user_states import UserStates
 from bot.keyboards.reply import main_menu_keyboard, chat_mode_keyboard
 from bot.keyboards.inline import character_keyboard, force_sub_keyboard
-from bot.middlewares.subscription import check_channel_subscription
+from bot.middlewares.subscription import check_channel_subscription, check_all_subscriptions
 
 logger = logging.getLogger(__name__)
 
@@ -83,8 +83,20 @@ async def handle_start(message: types.Message, state: FSMContext):
 @router.callback_query(F.data == "check_subscription")
 async def handle_check_subscription(callback: types.CallbackQuery, state: FSMContext):
     """Majburiy obunani qayta tekshirish tugmasi"""
-    channel = await db.get_force_channel()
-    is_sub = await check_channel_subscription(callback.bot, callback.from_user.id, channel)
+    channels_raw = await db.get_force_channel()
+    if not channels_raw:
+        await callback.answer("✅ Majburiy obuna o'chirilgan!", show_alert=True)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
+        await callback.message.answer(
+            "🎉 Marhamat, botdan to'liq foydalanishingiz mumkin:",
+            reply_markup=main_menu_keyboard()
+        )
+        return
+
+    is_sub, missing = await check_all_subscriptions(callback.bot, callback.from_user.id, channels_raw)
 
     if is_sub:
         await callback.answer("✅ Obuna tasdiqlandi! Rahmat.", show_alert=True)
@@ -93,13 +105,21 @@ async def handle_check_subscription(callback: types.CallbackQuery, state: FSMCon
             callback.from_user.username,
             callback.from_user.full_name
         )
-        await callback.message.delete()
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass
         await callback.message.answer(
-            "🎉 Obuna muvaffaqiyatli tekshirildi! Marhamat, botdan to'liq foydalanishingiz mumkin:",
-            reply_markup=main_menu_keyboard()
+            "🎉 <b>Obuna muvaffaqiyatli tekshirildi!</b>\n\nMarhamat, botdan to'liq foydalanishingiz mumkin:",
+            reply_markup=main_menu_keyboard(),
+            parse_mode="HTML"
         )
     else:
-        await callback.answer("❌ Siz hali ham kanalga a'zo bo'lmadingiz. Iltimos, avval a'zo bo'ling!", show_alert=True)
+        missing_names = ", ".join([ch.get("display", "kanal") for ch in missing])
+        await callback.answer(
+            f"❌ Siz hali barcha homiy kanallarga a'zo bo'lmadingiz!\nQuyidagilarga a'zo bo'ling: {missing_names}",
+            show_alert=True
+        )
 
 @router.message(F.text == "🔙 Asosiy menyu")
 @router.message(F.text == "❌ Bekor qilish")

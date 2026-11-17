@@ -10,7 +10,8 @@ from bot.states.user_states import AdminStates
 from bot.keyboards.inline import (
     admin_main_keyboard,
     admin_prompts_keyboard,
-    confirm_clear_prompts_keyboard
+    confirm_clear_prompts_keyboard,
+    force_sub_keyboard
 )
 from bot.keyboards.reply import main_menu_keyboard
 
@@ -354,53 +355,164 @@ async def handle_admin_prompt_clear_yes(callback: types.CallbackQuery):
         parse_mode="HTML"
     )
 
-# ==================== 5. MAJBURIY OBUNA KANALI ====================
+# ==================== 5. MAJBURIY OBUNA KANALLARI ====================
 
 @router.callback_query(F.data == "admin_channel")
 async def handle_admin_channel_menu(callback: types.CallbackQuery, state: FSMContext):
-    """Majburiy obuna kanalini sozlash"""
+    """Majburiy obuna kanallarini sozlash menyusi"""
     if not is_admin(callback.from_user.id):
         return
 
+    from bot.middlewares.subscription import parse_channels
+    await state.clear()
     current_ch = await db.get_force_channel()
-    ch_display = f"`{current_ch}`" if current_ch else "*(Belgilanmagan - Tekshiruv o'chiq)*"
+    parsed = parse_channels(current_ch) if current_ch else []
+
+    if parsed:
+        ch_display = "\n".join([f"• <b>{c.get('display')}</b>" for c in parsed])
+    else:
+        ch_display = "<i>(Belgilanmagan — Majburiy obuna hozirda o'chiq)</i>"
 
     text = (
-        "📢 **MAJBURIY OBUNA KANALI SOZLAMASI:**\n\n"
-        f"Hozirgi kanal: {ch_display}\n\n"
-        "Yangi kanal username yoki ID sini yuboring (masalan: `@kanal_nomi` yoki `-1001234567890`).\n"
-        "Tekshiruvni o'chirib qo'yish uchun `none` yoki `off` deb yozing:"
+        "📢 <b>MAJBURIY OBUNA KANALLARI SOZLAMASI:</b>\n\n"
+        f"<b>Hozirgi kanallar:</b>\n{ch_display}\n\n"
+        "Yangi kanal qo'shish uchun kanal linkini yoki usernamesini yuboring.\n"
+        "<i>Bir nechta kanal bo'lsa, vergul yoki yangi qatordan yozib yuboring.</i>\n\n"
+        "Masalan:\n"
+        "<code>@kanal1, @kanal2</code>\n"
+        "yoki <code>https://t.me/kanal1</code>\n\n"
+        "⚠️ <b>ENG MUHIM QOIDA:</b>\n"
+        "Kanalni kiritishdan oldin botni (@xadechabot) o'sha kanallarga <b>Administrator</b> qilib qo'shishingiz shart! Aks holda bot foydalanuvchilarning obunasini tekshira olmaydi.\n\n"
+        "Tekshiruvni butunlay o'chirib qo'yish uchun <code>none</code> yoki <code>off</code> deb yozing:"
     )
     await state.set_state(AdminStates.waiting_channel)
 
-    keyboard = types.InlineKeyboardMarkup(
-        inline_keyboard=[
-            [types.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="admin_back")]
-        ]
+    buttons = []
+    if parsed:
+        buttons.append([types.InlineKeyboardButton(text="👁 Obuna oynasini sinab ko'rish", callback_data="admin_channel_test")])
+        buttons.append([types.InlineKeyboardButton(text="🗑 Majburiy obunani o'chirish", callback_data="admin_channel_clear")])
+    buttons.append([types.InlineKeyboardButton(text="🔙 Admin panel", callback_data="admin_back")])
+
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=buttons)
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data == "admin_channel_clear")
+async def handle_admin_channel_clear(callback: types.CallbackQuery, state: FSMContext):
+    """Majburiy obunani tozalash"""
+    if not is_admin(callback.from_user.id):
+        return
+
+    await state.clear()
+    await db.set_force_channel("")
+    await callback.answer("✅ Majburiy obuna o'chirildi!", show_alert=True)
+    await handle_admin_channel_menu(callback, state)
+
+@router.callback_query(F.data == "admin_channel_test")
+async def handle_admin_channel_test(callback: types.CallbackQuery):
+    """Admin uchun obuna oynasini sinovdan o'tkazish"""
+    if not is_admin(callback.from_user.id):
+        return
+
+    from bot.middlewares.subscription import parse_channels, check_all_subscriptions
+    channels_raw = await db.get_force_channel()
+    if not channels_raw:
+        await callback.answer("Majburiy obuna kanallari belgilanmagan!", show_alert=True)
+        return
+
+    is_sub, missing = await check_all_subscriptions(callback.bot, callback.from_user.id, channels_raw)
+    parsed = parse_channels(channels_raw)
+    keyboard = force_sub_keyboard(parsed)
+
+    sub_status = "✅ Barcha kanallarga a'zosiz!" if is_sub else "❌ Siz hali kanallarga to'liq a'zo emassiz!"
+    text = (
+        "👁 <b>OBUNA OYNASI SINOVI (ADMIN TEST):</b>\n\n"
+        "Oddiy foydalanuvchilar botga yozganda aynan mana shu oynani ko'rishadi:\n"
+        "----------------------------------------\n"
+        "⚠️ <b>Botdan foydalanish uchun homiy kanalimizga a'zo bo'lishingiz shart!</b>\n\n"
+        "Iltimos, pastdagi tugma(lar) orqali kanalga a'zo bo'ling va so'ng "
+        "<b>'✅ Obunani tekshirish'</b> tugmasini bosing.\n"
+        "----------------------------------------\n\n"
+        f"📊 <b>Sizning profilingiz holati:</b> {sub_status}"
     )
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="Markdown")
+
+    await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
 @router.message(AdminStates.waiting_channel, F.text)
 async def handle_admin_save_channel(message: types.Message, state: FSMContext):
-    """Kanalni DB ga saqlash"""
+    """Kanalni DB ga saqlash va bot admin huquqini tekshirish"""
     if not is_admin(message.from_user.id):
         return
 
+    from bot.middlewares.subscription import parse_channels
     val = message.text.strip()
-    if val.lower() in ("none", "off", "ochir", "yoq"):
+    if val.lower() in ("none", "off", "ochir", "yoq", "0"):
         await db.set_force_channel("")
         await state.clear()
         await message.answer(
-            "✅ Majburiy obuna kanali o'chirildi. Endi barcha foydalanuvchilar to'siqsiz kiradi.",
-            reply_markup=admin_main_keyboard()
-        )
-    else:
-        await db.set_force_channel(val)
-        await state.clear()
-        await message.answer(
-            f"✅ Majburiy obuna kanali saqlandi: `{val}`\n\n"
-            f"⚠️ **Eslatma:** Bot ushbu kanalda administrator (admin) bo'lishi shart!",
+            "✅ <b>Majburiy obuna o'chirildi!</b> Endi barcha foydalanuvchilar to'siqsiz kiradi.",
             reply_markup=admin_main_keyboard(),
-            parse_mode="Markdown"
+            parse_mode="HTML"
         )
+        return
+
+    parsed = parse_channels(val)
+    if not parsed:
+        await message.answer(
+            "❌ <b>Noto'g'ri format!</b> Iltimos, kanal username (masalan: <code>@kanal</code>) yoki havolasini yuboring.",
+            parse_mode="HTML"
+        )
+        return
+
+    status_report = []
+    valid_channels = []
+    has_warning = False
+
+    for ch in parsed:
+        chat_id = ch["chat_id"]
+        display = ch.get("display", str(chat_id))
+        try:
+            chat = await message.bot.get_chat(chat_id)
+            ch_title = html.escape(chat.title or display)
+            ch["title"] = ch_title
+
+            bot_member = await message.bot.get_chat_member(chat_id, message.bot.id)
+            if bot_member.status in ("administrator", "creator"):
+                status_report.append(f"✅ <b>{ch_title}</b> (<code>{display}</code>) — Bot kanalda <b>Administrator</b>!")
+                valid_channels.append(ch)
+            else:
+                has_warning = True
+                status_report.append(f"⚠️ <b>{ch_title}</b> (<code>{display}</code>) — Bot kanalda bor, lekin <b>administrator emas</b>!")
+                valid_channels.append(ch)
+        except Exception as e:
+            has_warning = True
+            logger.warning(f"Kanalni tekshirishda xatolik ({chat_id}): {e}")
+            err_text = html.escape(str(e))
+            status_report.append(f"⚠️ <code>{display}</code> — Bot bu kanalni tekshira olmadi (<i>{err_text}</i>)")
+            valid_channels.append(ch)
+
+    # Saqlash (chat_id larni vergul bilan ajratilgan holda)
+    channels_str = ", ".join([str(c["chat_id"]) for c in valid_channels])
+    await db.set_force_channel(channels_str)
+    await state.clear()
+
+    report_text = "\n".join(status_report)
+    warning_advice = (
+        "\n\n⚠️ <b>DIQQAT:</b> Bot administrator bo'lmagan kanallarda foydalanuvchilarning obunasini tekshira olmaydi! "
+        "Iltimos, botni (@xadechabot) o'sha kanalga <b>Administrator</b> qilib qo'shing."
+    ) if has_warning else ""
+
+    await message.answer(
+        f"🎉 <b>Majburiy obuna kanallari muvaffaqiyatli saqlandi!</b>\n\n"
+        f"{report_text}"
+        f"{warning_advice}\n\n"
+        "💡 <i>Pastdagi tugma orqali oddiy foydalanuvchilar qanday ko'rishini sinab ko'rishingiz mumkin:</i>",
+        reply_markup=types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text="👁 Obunani sinab ko'rish", callback_data="admin_channel_test")],
+                [types.InlineKeyboardButton(text="🔙 Admin panel", callback_data="admin_back")]
+            ]
+        ),
+        parse_mode="HTML"
+    )

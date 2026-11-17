@@ -72,26 +72,36 @@ def payment_verify_keyboard(payment_id: int) -> InlineKeyboardMarkup:
         ]
     )
 
-def force_sub_keyboard(channel: str) -> InlineKeyboardMarkup:
-    """Majburiy obuna tugmasi"""
-    # Agar kanal @ bilan boshlansa t.me link yasaymiz
-    if channel.startswith("@"):
-        url = f"https://t.me/{channel.lstrip('@')}"
-    elif channel.startswith("https://"):
-        url = channel
-    else:
-        url = f"https://t.me/{channel}"
+def force_sub_keyboard(channel_data: Any) -> InlineKeyboardMarkup:
+    """Majburiy obuna tugmalari (bitta yoki bir nechta kanal uchun)"""
+    from bot.middlewares.subscription import parse_channels
 
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📢 Kanalga a'zo bo'lish", url=url)
-            ],
-            [
-                InlineKeyboardButton(text="✅ Obunani tekshirish", callback_data="check_subscription")
-            ]
-        ]
-    )
+    channels = parse_channels(channel_data)
+
+    inline_keyboard = []
+
+    if len(channels) == 1:
+        ch = channels[0]
+        url = ch.get("url") or f"https://t.me/{str(ch.get('chat_id', '')).lstrip('@')}"
+        inline_keyboard.append([
+            InlineKeyboardButton(text="📢 Kanalga a'zo bo'lish", url=url)
+        ])
+    elif len(channels) > 1:
+        for idx, ch in enumerate(channels, 1):
+            url = ch.get("url") or f"https://t.me/{str(ch.get('chat_id', '')).lstrip('@')}"
+            inline_keyboard.append([
+                InlineKeyboardButton(text=f"📢 {idx}-Kanalga a'zo bo'lish", url=url)
+            ])
+    else:
+        inline_keyboard.append([
+            InlineKeyboardButton(text="📢 Kanalga a'zo bo'lish", url="https://t.me/")
+        ])
+
+    inline_keyboard.append([
+        InlineKeyboardButton(text="✅ Obunani tekshirish", callback_data="check_subscription")
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=inline_keyboard)
 
 def admin_main_keyboard() -> InlineKeyboardMarkup:
     """Admin boshqaruv paneli menyusi"""
