@@ -79,8 +79,8 @@ class AIService:
         """
         ctx_id = session_id if session_id is not None else user_id
 
-        # 1. Tizim ko'rsatmasini (System Prompt) tayyorlash
-        system_instruction = await db.build_full_system_prompt(character)
+        # 1. Tizim ko'rsatmasini (System Prompt) tayyorlash (vaziyatga mos 3-5 ta jonli Few-Shot namunalar bilan)
+        system_instruction = await db.build_full_system_prompt(character, user_message=user_message)
 
         # 2. Faqatgina ushbu kontekstning (user yoki guruh) oldingi xabarlarini olish (Memory Isolation)
         history = await db.get_chat_history(user_id=ctx_id, limit=10)
