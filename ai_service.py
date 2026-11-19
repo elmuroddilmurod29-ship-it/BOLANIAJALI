@@ -107,8 +107,8 @@ class AIService:
         # 4. API so'rovini yuborish (bir necha model yoki urinish bilan)
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            temperature=0.7,
-            max_output_tokens=2048,
+            temperature=0.75,
+            max_output_tokens=300,
         )
 
         response_text: Optional[str] = None
