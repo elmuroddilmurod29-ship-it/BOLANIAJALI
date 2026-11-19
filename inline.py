@@ -112,14 +112,65 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="📢 Xabar yuborish", callback_data="admin_broadcast")
             ],
             [
-                InlineKeyboardButton(text="💳 Rekvizitni o'zgartirish", callback_data="admin_requisites"),
+                InlineKeyboardButton(text="💬 Yozishmalar va Hisobot", callback_data="admin_chats"),
                 InlineKeyboardButton(text="📝 AI Prompt boshqaruvi", callback_data="admin_prompts")
             ],
             [
+                InlineKeyboardButton(text="💳 Rekvizitni o'zgartirish", callback_data="admin_requisites"),
                 InlineKeyboardButton(text="📢 Majburiy obuna kanali", callback_data="admin_channel")
             ]
         ]
     )
+
+def admin_chats_keyboard(users: list, total_count: int, offset: int = 0, limit: int = 8) -> InlineKeyboardMarkup:
+    """Foydalanuvchilarning suhbatlar ro'yxati tugmalari"""
+    buttons = []
+    for u in users:
+        uid = u["user_id"]
+        uname = f"@{u['username']}" if u.get("username") else str(uid)
+        name = u.get("full_name") or uname
+        name_short = (name[:14] + '..') if len(name) > 16 else name
+        msg_count = u.get("msg_count", 0)
+        btn_text = f"👤 {name_short} ({msg_count} ta)"
+        buttons.append([InlineKeyboardButton(text=btn_text, callback_data=f"admin_user_chat:{uid}:0")])
+
+    nav_row = []
+    if offset > 0:
+        prev_offset = max(0, offset - limit)
+        nav_row.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"admin_chats:{prev_offset}"))
+    if offset + limit < total_count:
+        next_offset = offset + limit
+        nav_row.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"admin_chats:{next_offset}"))
+
+    if nav_row:
+        buttons.append(nav_row)
+
+    buttons.append([InlineKeyboardButton(text="🔍 User ID orqali qidirish", callback_data="admin_search_chat")])
+    buttons.append([InlineKeyboardButton(text="🔙 Admin panel", callback_data="admin_back")])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def admin_user_chat_keyboard(user_id: int, total_msgs: int, offset: int = 0, limit: int = 10) -> InlineKeyboardMarkup:
+    """Aynan bitta foydalanuvchining suhbati ichidagi tugmalar"""
+    buttons = []
+    nav_row = []
+
+    # offset ko'payganda eskilariga o'tadi
+    if offset + limit < total_msgs:
+        next_offset = offset + limit
+        nav_row.append(InlineKeyboardButton(text="⬅️ Eskiroq xabarlar", callback_data=f"admin_user_chat:{user_id}:{next_offset}"))
+
+    if offset > 0:
+        prev_offset = max(0, offset - limit)
+        nav_row.append(InlineKeyboardButton(text="Yangi xabarlar ➡️", callback_data=f"admin_user_chat:{user_id}:{prev_offset}"))
+
+    if nav_row:
+        buttons.append(nav_row)
+
+    buttons.append([InlineKeyboardButton(text="🗑 Suhbat tarixini tozalash", callback_data=f"admin_clear_chat:{user_id}")])
+    buttons.append([InlineKeyboardButton(text="🔙 Barcha suhbatlar ro'yxati", callback_data="admin_chats:0")])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 def admin_prompts_keyboard() -> InlineKeyboardMarkup:
     """Admin AI Promptlar menyusi"""

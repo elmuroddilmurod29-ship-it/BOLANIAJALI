@@ -10,3 +10,4 @@ class AdminStates(StatesGroup):
     waiting_card_holder = State()       # Yangi karta egasi ismini kiritish
     waiting_extra_prompt = State()      # Yangi qo'shimcha prompt matnini kiritish
     waiting_channel = State()           # Majburiy obuna kanalini kiritish
+    waiting_chat_search = State()       # Foydalanuvchi ID yoki username bo'yicha suhbat qidirish

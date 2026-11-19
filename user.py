@@ -1,11 +1,16 @@
+import asyncio
+import html
 import logging
 from pathlib import Path
+from typing import Optional, List, Dict, Any, Tuple
 from aiogram import Router, F, types
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import FSInputFile
+from bot.config import ADMIN_IDS
 from bot.database.db import db, get_now
 from bot.services.ai_service import ai_service
+from bot.services.moderation import detect_intimate_content
 from bot.states.user_states import UserStates
 from bot.keyboards.reply import main_menu_keyboard, chat_mode_keyboard
 from bot.keyboards.inline import character_keyboard, force_sub_keyboard
@@ -15,35 +20,123 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-AMINA_ASSETS_DIR = BASE_DIR / "bot" / "assets" / "amina"
+def get_amina_asset(filename: str) -> Optional[Path]:
+    """Asset faylini har qanday muhitda (Render, Linux, Windows) ishonchli topadi"""
+    base_dir = Path(__file__).resolve().parent.parent.parent
+    candidates = [
+        base_dir / "bot" / "assets" / "amina" / filename,
+        base_dir / "assets" / "amina" / filename,
+        Path.cwd() / "bot" / "assets" / "amina" / filename,
+        Path.cwd() / "assets" / "amina" / filename,
+        Path(__file__).resolve().parent.parent / "assets" / "amina" / filename,
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
+    return None
 
-CAT_PHOTO_PATH = AMINA_ASSETS_DIR / "cat.jpg"
-PHOTO_1_PATH = AMINA_ASSETS_DIR / "photo1.jpg"
-PHOTO_2_PATH = AMINA_ASSETS_DIR / "photo2.jpg"
+PERSONAL_PHOTOS = [
+    ("photo1.jpg", "bu mening rasmim 😊"),
+    ("photo2.jpg", "bu boshqasi, o'zimga yoqqan rasmlarimdan biri 🙈"),
+    ("photo3.jpg", "yana bittasi, dugonam tushirib bergandi 😊"),
+    ("photo4.jpg", "mana eng oxirgisi, bo'ldi endi ko'p so'ramang 🙈"),
+]
 
 def is_asking_for_cat_photo(text: str) -> bool:
-    t = text.lower()
+    t = text.lower().strip()
     cat_words = ["mushuk", "mushug", "mushugi", "mushugiz", "mushuging", "kot", "kiska"]
-    ask_words = ["rasm", "surat", "foto", "korsat", "ko'rsat", "tashla", "yubor", "ber", "bormi"]
+    ask_words = [
+        "rasm", "surat", "foto", "korsat", "ko'rsat", "tashla", "tawla", "yubor", "jonat", "jo'nat",
+        "ber", "bormi", "bomi", "qani", "koray", "ko'ray", "kore", "ko're", "tashavor", "jonatvor", "jo'natvor"
+    ]
     has_cat = any(w in t for w in cat_words)
     has_ask = any(w in t for w in ask_words) or ("mushuk" in t and "qani" in t)
-    return has_cat and (has_ask or "rasm" in t or "ko'rsat" in t or "korsat" in t)
+    return has_cat and (has_ask or "rasm" in t)
 
 def is_asking_for_personal_photo(text: str) -> bool:
-    t = text.lower()
-    if any(w in t for w in ["mushuk", "mushug", "kot"]):
+    t = text.lower().strip()
+    if any(w in t for w in ["mushuk", "mushug", "kot", "kiska"]):
         return False
 
-    if any(phrase in t for phrase in ["boshqasi", "boshqasini", "yana bitta rasm", "boshqa rasm"]):
+    # 1. To'g'ridan-to'g'ri bir yoki ikki so'zli aniq so'rovlar
+    exact_triggers = [
+        "rasm", "rasming", "rasmiz", "rasmingiz", "surat", "surating", "suratiz",
+        "foto", "fota", "fotang", "rasm qani", "rasming qani", "rasmiz qani",
+        "rasm bormi", "rasming bormi", "surat bormi", "foto bormi", "rasm tashla",
+        "rasm yubor", "rasm jonat", "rasm jo'nat"
+    ]
+    if t in exact_triggers:
         return True
 
-    photo_words = ["rasm", "surat", "foto", "rasmiz", "rasming", "rasmizi", "rasmingni", "ozingni", "o'zingni", "suratiz"]
-    ask_words = ["tashla", "yubor", "korsat", "ko'rsat", "ber", "bormi", "yana", "koray", "ko'ray"]
+    # 2. Yana bitta rasm so'rash
+    if any(phrase in t for phrase in [
+        "boshqasi", "boshqasini", "yana bitta", "yana rasm", "boshqa rasm",
+        "yana tashla", "yana bittasini", "yana bittasi", "yana yubor", "yana jonat", "yana jo'nat"
+    ]):
+        return True
+
+    # 3. Rasmga tegishli so'zlar
+    photo_words = [
+        "rasm", "surat", "foto", "fota", "rasmiz", "rasming", "rasmizi", "rasmingni",
+        "ozingni", "o'zingni", "suratiz", "surating", "suratingiz", "yuzing", "yuzingni",
+        "ko'rinishing", "korinishing", "turqing", "chehrang"
+    ]
+
+    ask_words = [
+        "tashla", "tawla", "tasla", "tashavor", "tashavol", "tashlasang", "tashab",
+        "yubor", "yuboring", "yuborchi", "yuborvor", "yuborsang",
+        "jonat", "jo'nat", "jonatvor", "jo'natvor", "jonating", "jo'nating", "jonatgin", "jo'natgin",
+        "korsat", "ko'rsat", "korsating", "ko'rsating", "korsatvor", "ko'rsatvor",
+        "ber", "bering", "bervor", "bersang",
+        "bormi", "bomi", "qani", "qanisan", "bormikan",
+        "koray", "ko'ray", "kore", "ko're", "koraylik", "ko'raylik", "kormoqchiman", "ko'rmoqchiman", "kuraylik"
+    ]
 
     has_photo = any(w in t for w in photo_words)
     has_ask = any(w in t for w in ask_words)
+
+    # Agar "o'zingni ko'rsat" desa (rasm so'zi bo'lmasa ham)
+    if any(w in t for w in ["ozingni", "o'zingni", "yuzingni", "ko'rinishingni"]) and any(
+        w in t for w in ["korsat", "ko'rsat", "koray", "ko'ray", "tashla", "yubor", "jonat", "jo'nat"]
+    ):
+        return True
+
     return has_photo and has_ask
+
+async def send_admin_intimate_alert(bot, user: dict, user_message: str, character: str, trigger_word: str):
+    """Adminlarga 18+ yoki ehtirosli xabar kelganda avtomatik ogohlantirish yuborish"""
+    char_name = "Amina AI (Qiz bola)" if character == "female" else "Shohrux AI (O'g'il bola)"
+    uname = f"@{user.get('username')}" if user.get('username') else "username yo'q"
+    now_str = get_now()
+    uid = user.get("user_id")
+
+    alert_text = (
+        "🚨 <b>DIQQAT: EHTIROSLI / 18+ XABAR ANIQLANDI!</b>\n\n"
+        f"👤 <b>Foydalanuvchi:</b> <b>{html.escape(user.get('full_name', 'Nomaʼlum'))}</b> ({uname})\n"
+        f"🆔 <b>User ID:</b> <code>{uid}</code>\n"
+        f"🎭 <b>Suhbatdoshi:</b> {char_name}\n"
+        f"⏰ <b>Vaqt:</b> {now_str}\n"
+        f"🔍 <b>Kalit so'z:</b> <code>{html.escape(trigger_word)}</code>\n\n"
+        f"💬 <b>Foydalanuvchi yozgan xabar:</b>\n"
+        f"<i>\"{html.escape(user_message)}\"</i>"
+    )
+
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                types.InlineKeyboardButton(
+                    text="👁 Ushbu suhbatni ko'rish",
+                    callback_data=f"admin_user_chat:{uid}:0"
+                )
+            ]
+        ]
+    )
+
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(chat_id=admin_id, text=alert_text, reply_markup=keyboard, parse_mode="HTML")
+        except Exception as e:
+            logger.warning(f"Adminga ehtirosli xabar bildirishnomasini yuborishda xatolik ({admin_id}): {e}")
 
 CHARACTER_NAMES = {
     "female": "👩 Amina (Qiz bola AI)",
@@ -352,66 +445,85 @@ async def handle_ai_chat_message(message: types.Message, state: FSMContext):
     # 2. Amina uchun Rasm so'rash mantiqi (Personal va Mushuk rasmi)
     if character == "female":
         # A) Mushuk rasmi so'ralganda
-        if is_asking_for_cat_photo(clean_text) and CAT_PHOTO_PATH.exists():
-            await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
-            cat_caption = "mana mening qora mushugim 🐈‍⬛ qora mushuklarni yaxshi ko'raman 😊"
-            photo = FSInputFile(str(CAT_PHOTO_PATH))
-            if is_group:
-                await message.reply_photo(photo=photo, caption=cat_caption)
-            else:
-                await message.answer_photo(photo=photo, caption=cat_caption)
+        if is_asking_for_cat_photo(clean_text):
+            cat_path = get_amina_asset("cat.jpg")
+            if cat_path and cat_path.exists():
+                await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
+                cat_caption = "mana mening qora mushugim 🐈‍⬛ qora mushuklarni yaxshi ko'raman 😊"
+                photo = FSInputFile(str(cat_path))
+                if is_group:
+                    await message.reply_photo(photo=photo, caption=cat_caption)
+                else:
+                    await message.answer_photo(photo=photo, caption=cat_caption)
 
-            await db.increment_user_photo(user_id, photo_type="cat")
-            await db.add_message(user_id=session_id, role="user", content=user_message_formatted)
-            await db.add_message(user_id=session_id, role="model", content=f"[Qora mushugi bilan tushgan rasmini yubordi]: {cat_caption}")
-            return
+                await db.increment_user_photo(user_id, photo_type="cat")
+                await db.add_message(user_id=session_id, role="user", content=user_message_formatted)
+                await db.add_message(user_id=session_id, role="model", content=f"[Qora mushugi bilan tushgan rasmini yubordi]: {cat_caption}")
+                return
 
         # B) Aminaning o'z shaxsiy rasmi so'ralganda
         if is_asking_for_personal_photo(clean_text):
             photo_stats = await db.get_user_photo_stats(user_id)
             personal_count = photo_stats.get("personal_photos_sent", 0)
 
-            # 2 martadan keyin rad etish
-            if personal_count >= 2:
-                refusal_text = "bo'ladi boshqa yubormayman 😒 rasm albomi emas bu yer 🙄"
-                if is_group:
-                    await message.reply(refusal_text)
-                else:
-                    await message.answer(refusal_text)
+            # Bizda 4 ta rasm bor: photo1.jpg, photo2.jpg, photo3.jpg, photo4.jpg
+            # Har safar yangisini yuboradi, 4 tadan oshganda ham aylanma (cycle) qilib chiroyli javob bilan yuboradi
+            photo_idx = personal_count % len(PERSONAL_PHOTOS)
+            filename, default_caption = PERSONAL_PHOTOS[photo_idx]
+            photo_path = get_amina_asset(filename)
 
-                await db.add_message(user_id=session_id, role="user", content=user_message_formatted)
-                await db.add_message(user_id=session_id, role="model", content=refusal_text)
-                return
-
-            # 1-rasm (ko'chada plashda)
-            elif personal_count == 0 and PHOTO_1_PATH.exists():
+            if photo_path and photo_path.exists():
                 await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
-                caption = "bu mening rasmim 😊"
-                photo = FSInputFile(str(PHOTO_1_PATH))
+                if personal_count >= len(PERSONAL_PHOTOS):
+                    caption = "mayli yana bitta rasmimni yuboraman 😊 lekin ko'p so'ramang 🙈"
+                else:
+                    caption = default_caption
+
+                photo = FSInputFile(str(photo_path))
                 if is_group:
                     await message.reply_photo(photo=photo, caption=caption)
                 else:
                     await message.answer_photo(photo=photo, caption=caption)
 
-                await db.increment_user_photo(user_id, photo_type="personal", next_idx=1)
+                await db.increment_user_photo(user_id, photo_type="personal", next_idx=(personal_count + 1))
                 await db.add_message(user_id=session_id, role="user", content=user_message_formatted)
-                await db.add_message(user_id=session_id, role="model", content=f"[O'zining rasmini yubordi]: {caption}")
+                await db.add_message(user_id=session_id, role="model", content=f"[Rasmini yubordi]: {caption}")
                 return
-
-            # 2-rasm (kafeda qahva bilan)
-            elif personal_count == 1 and PHOTO_2_PATH.exists():
-                await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
-                caption = "bu boshqasi, lekin bo'ldi boshqa so'ramang 🙈"
-                photo = FSInputFile(str(PHOTO_2_PATH))
+            else:
+                logger.warning(f"Amina photo file not found: {filename}")
+                no_photo_text = "hozir rasmim yo'q edi telefonimda keyinroq yuboraman 😊"
                 if is_group:
-                    await message.reply_photo(photo=photo, caption=caption)
+                    await message.reply(no_photo_text)
                 else:
-                    await message.answer_photo(photo=photo, caption=caption)
-
-                await db.increment_user_photo(user_id, photo_type="personal", next_idx=2)
+                    await message.answer(no_photo_text)
                 await db.add_message(user_id=session_id, role="user", content=user_message_formatted)
-                await db.add_message(user_id=session_id, role="model", content=f"[O'zining 2-rasmini yubordi]: {caption}")
+                await db.add_message(user_id=session_id, role="model", content=no_photo_text)
                 return
+
+    # Shohrux (male) uchun rasm so'ralganda
+    elif character == "male":
+        if is_asking_for_personal_photo(clean_text) or is_asking_for_cat_photo(clean_text):
+            shohrux_reply = "e rasmga tushishni yoqtirmayman bilasanu 😒 rulda edim ko'rishganda o'zimni ko'rasan"
+            if is_group:
+                await message.reply(shohrux_reply)
+            else:
+                await message.answer(shohrux_reply)
+            await db.add_message(user_id=session_id, role="user", content=user_message_formatted)
+            await db.add_message(user_id=session_id, role="model", content=shohrux_reply)
+            return
+
+    # 2.5 Ehtirosli yoki 18+ xabarlarni aniqlash va adminga darhol xabar berish
+    is_intimate, trigger_word = detect_intimate_content(user_message_formatted)
+    if is_intimate:
+        asyncio.create_task(
+            send_admin_intimate_alert(
+                bot=message.bot,
+                user=user,
+                user_message=user_message_formatted,
+                character=character,
+                trigger_word=trigger_word
+            )
+        )
 
     # 3. Telegramda 'typing' animatsiyasini chiqarish
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")

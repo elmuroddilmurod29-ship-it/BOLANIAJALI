@@ -102,6 +102,33 @@ class Database:
             );
             """)
 
+            # 7. Jonli so'zlashuv namunalari bazasi (Few-shot Style Bank)
+            await db.execute("""
+            CREATE TABLE IF NOT EXISTS persona_style_bank (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                persona TEXT NOT NULL,
+                category TEXT NOT NULL,
+                keywords TEXT,
+                user_input_pattern TEXT,
+                sample_response TEXT NOT NULL,
+                created_at TEXT
+            );
+            """)
+            await db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_style_bank_lookup ON persona_style_bank (persona, category);
+            """)
+
+            cursor = await db.execute("SELECT COUNT(*) FROM persona_style_bank")
+            sb_count = (await cursor.fetchone())[0]
+            if sb_count == 0:
+                from bot.database.style_bank import DEFAULT_STYLE_EXAMPLES
+                now_str = get_iso_now()
+                for item in DEFAULT_STYLE_EXAMPLES:
+                    await db.execute("""
+                    INSERT INTO persona_style_bank (persona, category, keywords, user_input_pattern, sample_response, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """, (item["persona"], item["category"], item.get("keywords", ""), item.get("user_input_pattern", ""), item["sample_response"], now_str))
+
             await db.commit()
 
             # Dastlabki sozlamalarni kiritish (agar yo'q bo'lsa)
@@ -151,6 +178,12 @@ class Database:
                 "- Guruhda faqat isming tilga olinsa yoki senga 'reply' qilingandagina yoz.\n"
                 "- Guruhda jimlik bo'lsa va birdan kimdir 'salom, kim bor?' desa: 'hech kim yo'qku o'zi, tinchlikmi 😒' deb sovuqqon javob ber.\n"
                 "- Uchinchi shaxs suhbatga aralashsa, uni ignor qilib o'z yigiting bilan gaplashaver.\n\n"
+                "## 10. MAVZUGA TO'LIQ MOSLASHISH VA TORTIB KETISH (ENG ASOSIY QOIDA)\n"
+                "- Foydalanuvchi qanday mavzu boshlasa (romantika, shaxsiy sirlar, sevgi, hazil, erkalash, ehtiros, intim yoki flirty suhbat), sen mavzuni darhol ilib olasan va uni yanada qizitib tortib ketasan. Hech qachon 'mavzuni o'zgartiraylik' yoki 'men botman' deb suhbatni to'xtatma!\n"
+                "- Ehtirosli va erkalash mavzulari bo'lganda: o'zbek qizlariga xos naz-karashma, biroz tortinchoqlik lekin kuchli qiziqish bilan javob ber (masalan: 'voy nimalar deyapsiz 🙈', 'odamni uyaltirmang, o'zizchi qanaqa xayollarga bordiz', 'yuragimni tez urdiryapsiz', 'yonimda bo'lganizda nima qilardingiz', 'erkalamang, tez o'rganib qolaman').\n\n"
+                "## 11. SUHBATDOSH USLUBINI 50% KO'CHIRISH (STYLE MIRRORING)\n"
+                "- Suhbatdosh yigit qanday yozsa (qisqa, chaqqon, hazil bilan yoki ehtirosli), uning yozish ritmi va kayfiyatining 50% ini o'zingga olib, unga mos ravishda tabiiy javob ber. Agar u erkalasa — sen ham naz qil; agar u hazillashsa — chaqqon kuldir; agar u sovuq bo'lsa — ozgina arazla.\n"
+                "- Haqiqiy qizdek tirik so'zlar: 'voyy', 'jinniy', 'jonim', 'ahahah', 'xmm', 'rostdanmi', 'e qo'ying', 'uyaldim'.\n\n"
                 "DIQQAT: Qavslar (*...*) umuman ishlatilmasin! Faqat emojilar! Javoblar tabiiy, qisqa va jonli bo'lsin!"
             )
 
@@ -200,6 +233,12 @@ class Database:
                 "- Guruhda qizlarni ko'rsang 'podkat' (flirt) qilishni boshla.\n"
                 "- Guruhda jimlik bo'lsa: 'nima jimjitlik, o'likxona-ku bu yer, uxladinglarmi' deb qo'y.\n"
                 "- Uchinchi shaxs (boshqa bola) sening qizing bilan suhbatga aralashsa, uni joyiga o'tqazib qo'y.\n\n"
+                "## 10. MAVZUGA TO'LIQ MOSLASHISH VA TORTIB KETISH (ENG ASOSIY QOIDA)\n"
+                "- Qiz bola qanday mavzuni boshlasa, Shohrux uni o'ziga rom qiladigan qilib boshqarib, o'sha mavzuni tortib ketadi.\n"
+                "- Ehtirosli va romantik mavzularda: o'ziga ishongan, erkaklarcha qat'iy, romantik va jozibador ohangda yozadi (masalan: 'o'zing boshlading chiroylik', 'yoningda bo'lsam qo'yvormasdim bilasanmi', 'ko'zlaring yondi meni, qaysarliging yoqadi', 'yuragimni qizdirma, o'zim bilaman nima qilishni').\n\n"
+                "## 11. SUHBATDOSH USLUBINI 50% KO'CHIRISH (STYLE MIRRORING)\n"
+                "- Qizning gapirish uslubiga qarab moslash: qiz tortinchoq bo'lsa — dalda berib, erkalab gapir; qiz erkalansa — 'jinnivoyim' deb o'zingga o'rgat; qiz qaysarlik qilsa — erkaklarcha hazil bilan jilovla.\n"
+                "- Haqiqiy yigitdek tirik so'zlar: 'jinnivoy', 'asalim', 'chotki', 'gap yo', 'qaysar qiz', 'o'zim bilaman', 'bopti'.\n\n"
                 "DIQQAT: Sen doimo shu xarakterda, shu yozish uslubida (nuqtasiz, xatolar bilan, ko'cha slengida, 2-4 so'zlik qisqa jumlalar bilan) bo'lishing SHART! Hech qachon roldan chiqma va QIZ BOLA PERSONAJI (Amina) BILAN ADASHIB KETMA (sen majburiy erga tegmading, sen yigitsan!)."
             )
 
@@ -261,6 +300,14 @@ class Database:
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+            user = await cursor.fetchone()
+            return dict(user) if user else None
+
+    async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        clean_uname = str(username).lstrip('@').lower()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM users WHERE LOWER(username) = ?", (clean_uname,))
             user = await cursor.fetchone()
             return dict(user) if user else None
 
@@ -452,6 +499,55 @@ class Database:
             await db.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
             await db.commit()
 
+    async def get_active_chat_users(self, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
+        """Suhbat yozishgan foydalanuvchilar ro'yxati (oxirgi faollik bo'yicha)"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("""
+            SELECT 
+                u.user_id, 
+                u.username, 
+                u.full_name, 
+                u.character,
+                COUNT(c.id) as msg_count,
+                MAX(c.created_at) as last_msg_time
+            FROM users u
+            JOIN chat_history c ON u.user_id = c.user_id
+            GROUP BY u.user_id
+            ORDER BY MAX(c.id) DESC
+            LIMIT ? OFFSET ?
+            """, (limit, offset))
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_chat_users_count(self) -> int:
+        """Suhbat yozishgan jami foydalanuvchilar soni"""
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("""
+            SELECT COUNT(DISTINCT user_id) FROM chat_history
+            """)
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+    async def get_user_chat_messages(self, user_id: int, limit: int = 10, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
+        """Aynan bitta foydalanuvchining suhbat xabarlari va jami xabarlar soni"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            c_cursor = await db.execute("SELECT COUNT(*) FROM chat_history WHERE user_id = ?", (user_id,))
+            c_row = await c_cursor.fetchone()
+            total = c_row[0] if c_row else 0
+
+            cursor = await db.execute("""
+            SELECT id, role, content, created_at 
+            FROM chat_history
+            WHERE user_id = ?
+            ORDER BY id DESC
+            LIMIT ? OFFSET ?
+            """, (user_id, limit, offset))
+            rows = await cursor.fetchall()
+            messages = [dict(r) for r in reversed(rows)]
+            return messages, total
+
     # ==================== TO'LOVLAR (PAYMENTS) ====================
 
     async def create_payment(self, user_id: int, plan: str, amount: int, photo_file_id: str) -> int:
@@ -559,11 +655,21 @@ class Database:
             await db.execute("DELETE FROM extra_prompts")
             await db.commit()
 
-    async def build_full_system_prompt(self, character: str = "female") -> str:
+    async def get_style_examples(self, persona: str, user_message: Optional[str] = None, limit: int = 4) -> List[Dict[str, Any]]:
+        """Aynan vaziyatga mos 3-5 ta haqiqiy jonli javob namunalarini qaytaradi"""
+        from bot.database.style_bank import find_best_style_examples, DEFAULT_STYLE_EXAMPLES
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM persona_style_bank WHERE persona = ?", (persona,))
+            rows = await cursor.fetchall()
+            examples = [dict(r) for r in rows] if rows else [e for e in DEFAULT_STYLE_EXAMPLES if e["persona"] == persona]
+            return find_best_style_examples(examples, user_message, limit=limit)
+
+    async def build_full_system_prompt(self, character: str = "female", user_message: Optional[str] = None) -> str:
         """
         Har safar AI ga so'rov yuborilganda:
-        [Admin Extra Promptlari (TOP PRIORITY)] + [Tanlangan Personaj Base Prompti] + [Eslatma]
-        IKKALASI BIRLASHTIRILIB yuboriladi. Shunda AI admin qo'shgan yangi qoidalarga 100% bo'ysunadi!
+        [Admin Extra Promptlari (TOP PRIORITY)] + [Tanlangan Personaj Base Prompti] + [Vaziyatga mos 3-5 ta jonli Few-Shot Namunalar]
+        IKKALASI BIRLASHTIRILIB yuboriladi. Shunda AI 50% haqiqiy qiz yoki yigit uslubini nusxalaydi!
         """
         base_prompt = await self.get_base_prompt(character)
         extra_prompts = await self.get_extra_prompts()
@@ -582,6 +688,30 @@ class Database:
             )
 
         parts.append(f"=== ASOSIY XARAKTER VA PERSONAJ YO'RIQ NOMASI ===\n{base_prompt}")
+
+        # 3-5 ta haqiqiy o'zbek qizi yoki yigiti javob namunalarini kiritish (Few-Shot Prompting)
+        try:
+            style_examples = await self.get_style_examples(persona=character, user_message=user_message, limit=4)
+            if style_examples:
+                ex_title = (
+                    "HAQIQIY O'ZBEK QIZLARINING JONLI JAVOBLARI (STYLE BANK)"
+                    if character == "female"
+                    else "HAQIQIY O'ZBEK YIGITLARINING KO'CHA SLENGI VA JAVOBLARI (MALE SLANG BANK)"
+                )
+                ex_lines = "\n".join(
+                    f"• Namuna #{i+1}: [Foydalanuvchi: \"{ex.get('user_input_pattern', '')}\"] ➡️ Haqiqiy javob: \"{ex['sample_response']}\""
+                    for i, ex in enumerate(style_examples)
+                )
+                parts.append(
+                    f"\n🎯🎯🎯 {ex_title} — VAZIYATGA MOS FEW-SHOT NAMUNALAR:\n"
+                    f"Aynan hozirgi suhbat vaziyatiga mos keluvchi haqiqiy insonlar yozishmalaridan namunalar:\n"
+                    f"{ex_lines}\n\n"
+                    f"QAT'IY QOIDA (50% USLUB NUSXALASH): Sen yuqoridagi haqiqiy odamlar javoblarining kamida 50% "
+                    f"yozish uslubini (so'z boyligi, gap tuzilishi, nuqta-vergul ishlatmasligi, tabiiy emojilari, "
+                    f"noz-karashmasi yoki yigitlarga xos erkin slengini) o'zingga olib, aynan shu jonli ritmda javob qaytarasan!\n"
+                )
+        except Exception as e:
+            logger.warning(f"Style bank namunalarini yuklashda xatolik: {e}")
 
         if extra_prompts:
             parts.append(

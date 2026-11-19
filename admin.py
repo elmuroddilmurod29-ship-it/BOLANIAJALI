@@ -11,7 +11,9 @@ from bot.keyboards.inline import (
     admin_main_keyboard,
     admin_prompts_keyboard,
     confirm_clear_prompts_keyboard,
-    force_sub_keyboard
+    force_sub_keyboard,
+    admin_chats_keyboard,
+    admin_user_chat_keyboard
 )
 from bot.keyboards.reply import main_menu_keyboard
 
@@ -516,3 +518,213 @@ async def handle_admin_save_channel(message: types.Message, state: FSMContext):
         ),
         parse_mode="HTML"
     )
+
+# ==================== 6. FOYDALANUVCHILAR YOZISHMALARI VA HISOBOTLAR ====================
+
+@router.callback_query(F.data.startswith("admin_chats"))
+async def handle_admin_chats_menu(callback: types.CallbackQuery, state: FSMContext):
+    """Foydalanuvchilarning bot bilan yozishmalari hisoboti"""
+    if not is_admin(callback.from_user.id):
+        return
+
+    await state.clear()
+    data = callback.data
+    offset = 0
+    if ":" in data:
+        try:
+            offset = int(data.split(":")[1])
+        except ValueError:
+            offset = 0
+
+    limit = 8
+    users = await db.get_active_chat_users(limit=limit, offset=offset)
+    total_count = await db.get_chat_users_count()
+
+    if not users:
+        text = (
+            "📋 <b>YOZISHMALAR VA HISOBOT:</b>\n\n"
+            "Hozircha botda foydalanuvchilar suhbati mavjud emas yoki xotira bo'sh."
+        )
+        keyboard = types.InlineKeyboardMarkup(
+            inline_keyboard=[
+                [types.InlineKeyboardButton(text="🔍 User ID orqali qidirish", callback_data="admin_search_chat")],
+                [types.InlineKeyboardButton(text="🔙 Admin panel", callback_data="admin_back")]
+            ]
+        )
+        if callback.message.text:
+            await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        else:
+            await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.answer()
+        return
+
+    start_num = offset + 1
+    end_num = min(offset + limit, total_count)
+    text = (
+        "📋 <b>FOYDALANUVCHILAR YOZISHMALARI VA HISOBOTI:</b>\n\n"
+        f"📊 Jami faol suhbatlashganlar: <b>{total_count} ta</b>\n"
+        f"Ko'rsatilmoqda: <b>{start_num}-{end_num}</b>\n\n"
+        "💡 <i>Suhbat tarixini o'qish uchun pastdagi foydalanuvchilardan birini tanlang yoki ID bo'yicha qidiring:</i>"
+    )
+    keyboard = admin_chats_keyboard(users, total_count, offset=offset, limit=limit)
+    if callback.message.text:
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        await callback.message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("admin_user_chat:"))
+async def handle_admin_user_chat(callback: types.CallbackQuery, state: FSMContext):
+    """Aynan bitta foydalanuvchining bot bilan yozishgan chat tarixini ko'rish"""
+    if not is_admin(callback.from_user.id):
+        return
+
+    await state.clear()
+    parts = callback.data.split(":")
+    target_uid = int(parts[1])
+    offset = int(parts[2]) if len(parts) > 2 else 0
+
+    limit = 10
+    messages, total_msgs = await db.get_user_chat_messages(target_uid, limit=limit, offset=offset)
+    target_user = await db.get_user(target_uid)
+
+    uname = f"@{target_user.get('username')}" if target_user and target_user.get("username") else "yo'q"
+    full_name = html.escape(target_user.get("full_name") or "Foydalanuvchi") if target_user else "Nomaʼlum"
+    char_code = target_user.get("character", "female") if target_user else "female"
+    char_label = "Amina (Qiz bola AI)" if char_code == "female" else "Shohrux (O'g'il bola AI)"
+
+    if not messages:
+        text = (
+            f"💬 <b>SUHBAT TARIXI:</b> {full_name} ({uname})\n"
+            f"🆔 <b>ID:</b> <code>{target_uid}</code> | 🎭 <b>Personaj:</b> {char_label}\n\n"
+            "<i>Ushbu foydalanuvchi bilan yozishmalar mavjud emas yoki tozalangan.</i>"
+        )
+        keyboard = admin_user_chat_keyboard(target_uid, total_msgs=0, offset=0, limit=limit)
+        await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+        await callback.answer()
+        return
+
+    start_idx = max(1, total_msgs - offset - len(messages) + 1)
+    end_idx = total_msgs - offset
+    header = (
+        f"💬 <b>SUHBAT TARIXI:</b> {full_name} ({uname})\n"
+        f"🆔 <b>ID:</b> <code>{target_uid}</code> | 🎭 <b>Personaj:</b> {char_label}\n"
+        f"📊 Jami xabarlar: <b>{total_msgs} ta</b> (Ko'rsatilmoqda: <b>{start_idx}-{end_idx}</b>)\n"
+        "----------------------------------------\n\n"
+    )
+
+    body_lines = []
+    for m in messages:
+        role_label = f"👤 <b>{full_name}</b>" if m["role"] == "user" else f"🤖 <b>{char_label}</b>"
+        time_part = f" <i>({m.get('created_at', '')[:16]})</i>" if m.get("created_at") else ""
+        content_escaped = html.escape(m["content"])
+        body_lines.append(f"{role_label}{time_part}:\n{content_escaped}\n")
+
+    full_text = header + "\n".join(body_lines)
+    if len(full_text) > 4000:
+        full_text = full_text[:3990] + "\n... <i>(qisqartirildi)</i>"
+
+    keyboard = admin_user_chat_keyboard(target_uid, total_msgs=total_msgs, offset=offset, limit=limit)
+    if callback.message.text:
+        await callback.message.edit_text(full_text, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        await callback.message.answer(full_text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+@router.callback_query(F.data.startswith("admin_clear_chat:"))
+async def handle_admin_clear_user_chat(callback: types.CallbackQuery):
+    """Admin tomonidan foydalanuvchining chat tarixini tozalash"""
+    if not is_admin(callback.from_user.id):
+        return
+
+    target_uid = int(callback.data.split(":")[1])
+    await db.clear_chat_history(target_uid)
+    await callback.answer("✅ Foydalanuvchi suhbat tarixi tozalandi!", show_alert=True)
+    await handle_admin_chats_menu(callback, None)
+
+@router.callback_query(F.data == "admin_search_chat")
+async def handle_admin_search_chat_start(callback: types.CallbackQuery, state: FSMContext):
+    """User ID yoki username bo'yicha suhbat qidirish"""
+    if not is_admin(callback.from_user.id):
+        return
+
+    await state.set_state(AdminStates.waiting_chat_search)
+    text = (
+        "🔍 <b>FOYDALANUVCHINI QIDIRISH:</b>\n\n"
+        "Qidirmoqchi bo'lgan foydalanuvchining <b>Telegram ID</b> raqamini yuboring.\n"
+        "(Masalan: <code>6125160021</code>)"
+    )
+    keyboard = types.InlineKeyboardMarkup(
+        inline_keyboard=[
+            [types.InlineKeyboardButton(text="❌ Bekor qilish", callback_data="admin_chats")]
+        ]
+    )
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+@router.message(AdminStates.waiting_chat_search, F.text)
+async def handle_admin_search_chat_result(message: types.Message, state: FSMContext):
+    """Qidiruv natijasini ko'rsatish"""
+    if not is_admin(message.from_user.id):
+        return
+
+    query = message.text.strip().lstrip('@')
+    target_uid = None
+    if query.isdigit() or (query.startswith("-") and query[1:].isdigit()):
+        target_uid = int(query)
+    else:
+        # Username bo'yicha qidirish
+        user_data = await db.get_user_by_username(query)
+        if user_data:
+            target_uid = user_data["user_id"]
+
+    if not target_uid:
+        await message.answer(
+            "❌ <b>Foydalanuvchi topilmadi!</b>\nIltimos, to'g'ri Telegram ID raqam yuboring.",
+            reply_markup=types.InlineKeyboardMarkup(
+                inline_keyboard=[[types.InlineKeyboardButton(text="🔙 Orqaga", callback_data="admin_chats")]]
+            ),
+            parse_mode="HTML"
+        )
+        return
+
+    await state.clear()
+    limit = 10
+    messages, total_msgs = await db.get_user_chat_messages(target_uid, limit=limit, offset=0)
+    target_user = await db.get_user(target_uid)
+
+    uname = f"@{target_user.get('username')}" if target_user and target_user.get("username") else "yo'q"
+    full_name = html.escape(target_user.get("full_name") or "Foydalanuvchi") if target_user else "Nomaʼlum"
+    char_code = target_user.get("character", "female") if target_user else "female"
+    char_label = "Amina (Qiz bola AI)" if char_code == "female" else "Shohrux (O'g'il bola AI)"
+
+    if not messages:
+        text = (
+            f"💬 <b>SUHBAT TARIXI:</b> {full_name} ({uname})\n"
+            f"🆔 <b>ID:</b> <code>{target_uid}</code> | 🎭 <b>Personaj:</b> {char_label}\n\n"
+            "<i>Ushbu foydalanuvchi bilan yozishmalar mavjud emas yoki tozalangan.</i>"
+        )
+        keyboard = admin_user_chat_keyboard(target_uid, total_msgs=0, offset=0, limit=limit)
+        await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
+        return
+
+    header = (
+        f"💬 <b>SUHBAT TARIXI:</b> {full_name} ({uname})\n"
+        f"🆔 <b>ID:</b> <code>{target_uid}</code> | 🎭 <b>Personaj:</b> {char_label}\n"
+        f"📊 Jami xabarlar: <b>{total_msgs} ta</b>\n"
+        "----------------------------------------\n\n"
+    )
+
+    body_lines = []
+    for m in messages:
+        role_label = f"👤 <b>{full_name}</b>" if m["role"] == "user" else f"🤖 <b>{char_label}</b>"
+        time_part = f" <i>({m.get('created_at', '')[:16]})</i>" if m.get("created_at") else ""
+        content_escaped = html.escape(m["content"])
+        body_lines.append(f"{role_label}{time_part}:\n{content_escaped}\n")
+
+    full_text = header + "\n".join(body_lines)
+    if len(full_text) > 4000:
+        full_text = full_text[:3990] + "\n... <i>(qisqartirildi)</i>"
+
+    keyboard = admin_user_chat_keyboard(target_uid, total_msgs=total_msgs, offset=0, limit=limit)
+    await message.answer(full_text, reply_markup=keyboard, parse_mode="HTML")
